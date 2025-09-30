@@ -28,7 +28,7 @@ app.use('/files', filesRoutes);
 
 app.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.promise().query('SELECT 1 + 1 AS solution');
+    const [rows] = await pool.query('SELECT 1 + 1 AS solution');
     res.json({ ok: true, data: rows });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
