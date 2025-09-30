@@ -28,12 +28,13 @@ app.use('/files', filesRoutes);
 
 app.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.promise().query('SELECT 1 + 1 AS solution');
+    const [rows] = await pool.query('SELECT 1 + 1 AS solution');
     res.json({ ok: true, data: rows });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
 
+
 const PORT = 3000;
-app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server listening on port ${PORT}`));
