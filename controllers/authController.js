@@ -13,14 +13,12 @@ function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
-function generatePin() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
+
 
 // ---------------- Signup ----------------
 export async function signup(req, res) {
   const { email, password, name, mobile, macid } = req.body; 
-
+debugger;
   if (!email || !password || !name || !mobile) {
     return res.status(400).json({ status: false, message: 'Missing required fields' });
   }
@@ -41,7 +39,7 @@ export async function signup(req, res) {
       [email, hashedPassword, 0, verification_code, name, mobile, macid || null]
     );
 
-    const verify_link = `http://3.91.159.64/verify?code=${verification_code}`;
+    const verify_link = `http://localhost:3000/verify?code=${verification_code}`;
     const message = `Hello ${name},\n\nPlease click the following link to verify your email:\n\n${verify_link}\n\nThank you!`;
 
     const sent = await sendEmail(email, 'BelectriQ Mobility Email Confirmation', message);
@@ -60,6 +58,7 @@ export async function signup(req, res) {
 
 // ---------------- Login ----------------
 export async function login(req, res) {
+  debugger;
   const { email, password, EngineeringModeLogin } = req.body;
   const engineeringMode = !!EngineeringModeLogin;
 
@@ -68,21 +67,40 @@ export async function login(req, res) {
   }
 
   try {
+    // Determine table to check
     const table = engineeringMode ? 'Engineeringmodelogin' : 'users';
-    const [rows] = await pool.query(`SELECT * FROM ${table} WHERE email=?`, [email]);
-    if (!rows.length) return res.status(401).json({ status: false, message: 'Invalid credentials' });
+
+    // Check if user exists in the selected table
+    const [rows] = await pool.query(`SELECT * FROM ${table} WHERE email = ?`, [email]);
+    if (!rows.length) {
+      if (engineeringMode) {
+        return res.status(404).json({
+          status: false,
+          message: 'Engineering mode user not found in Engineeringmodelogin table'
+        });
+      } else {
+        return res.status(401).json({ status: false, message: 'Invalid credentials' });
+      }
+    }
 
     const user = rows[0];
+
+    // Compare password
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ status: false, message: 'Invalid credentials' });
 
+    // For normal users, check email verification
     if (!engineeringMode && user.is_verified !== 1) {
       return res.status(403).json({ status: false, message: 'Please verify your email' });
     }
 
+    // Generate JWT
     const token = signToken({ sub: user.id, email: user.email });
+
+    // Update token in DB
     await pool.query(`UPDATE ${table} SET token=? WHERE id=?`, [token, user.id]);
 
+    // Response
     res.json({
       status: true,
       message: 'Login successful',
@@ -102,6 +120,7 @@ export async function login(req, res) {
     res.status(500).json({ status: false, message: 'Server error' });
   }
 }
+
 
 // ---------------- Verify ----------------
 export async function verify(req, res) {
@@ -145,56 +164,129 @@ export async function requestReset(req, res) {
 
 // ---------------- Validate PIN ----------------
 export async function validatePin(req, res) {
-  const { pin, EngineeringModeLogin } = req.body;
-  const userId = req.user.sub;
-  const engineeringMode = !!EngineeringModeLogin;
+  const { email, pin } = req.body;
+
+  if (!email || !pin) {
+    return res.status(400).json({ status: false, message: 'Missing email or PIN' });
+  }
 
   try {
-    const table = engineeringMode ? 'Engineeringmodelogin' : 'users';
-    const [rows] = await pool.query(`SELECT id, token, updated_at FROM ${table} WHERE id = ?`, [userId]);
-    if (!rows.length) return res.json({ status: false, message: 'User not found' });
+    // Fetch the latest PIN for the email
+    const [rows] = await pool.query(
+      'SELECT pin, created_at FROM engineering_pins WHERE email = ?',
+      [email]
+    );
 
-    const user = rows[0];
-    const tokenTime = user.updated_at ? new Date(user.updated_at).getTime() : null;
+    if (!rows.length) {
+      return res.json({ status: false, message: 'Email not found' });
+    }
+
+    const { pin: dbPin, created_at } = rows[0];
+    const createdAtTime = new Date(created_at).getTime();
     const now = Date.now();
     const fiveMinutes = 5 * 60 * 1000;
 
-    if (user.token === pin && (!tokenTime || now - tokenTime <= fiveMinutes)) {
-      await pool.query(`UPDATE ${table} SET token = NULL WHERE id = ?`, [user.id]);
+    if (pin === dbPin && (now - createdAtTime <= fiveMinutes)) {
+      // Clear the PIN after successful verification
+      await pool.query('UPDATE engineering_pins SET pin = NULL WHERE email = ?', [email]);
       return res.json({ status: true, message: 'PIN verified successfully' });
     } else {
       return res.json({ status: false, message: 'Invalid or expired PIN' });
     }
+
   } catch (err) {
     console.error('validatePin error:', err);
     res.status(500).json({ status: false, message: 'Server error' });
   }
 }
 
+
 // ---------------- Update Password ----------------
 export async function updatePassword(req, res) {
-  const { newPassword } = req.body;
-  const userId = req.user.sub;
+  const { token, newPassword, EngineeringModeLogin } = req.body;
+  const engineeringMode = !!EngineeringModeLogin;
 
-  if (!newPassword) return res.status(400).json({ message: 'Missing new password' });
+  if (!token || !newPassword) {
+    return res.status(400).json({ status: false, message: 'Missing token or new password' });
+  }
 
   try {
+    // Choose table dynamically
+    const table = engineeringMode ? 'Engineeringmodelogin' : 'users';
+
+    // Hash new password
     const hash = await bcrypt.hash(newPassword, 12);
-    await pool.query('UPDATE users SET password=? WHERE id=?', [hash, userId]);
-    res.json({ message: 'Password updated successfully' });
+
+    // Update password where token matches and clear the token
+    const [result] = await pool.query(
+      `UPDATE ${table} SET password = ?, token = NULL WHERE token = ?`,
+      [hash, token]
+    );
+
+    if (result.affectedRows > 0) {
+      return res.json({ status: true, message: 'Password updated successfully' });
+    } else {
+      return res.status(400).json({ status: false, message: 'Invalid token or token expired' });
+    }
+
   } catch (err) {
     console.error('updatePassword error:', err);
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ status: false, message: 'Server error' });
   }
 }
+
 
 // ---------------- Generate PIN (demo only) ----------------
 export async function generatePin(req, res) {
+  const { email, name, mobile, useremail } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ status: false, message: 'Email is required' });
+  }
+
   try {
+    // Check if email exists in mngremails
+    const [rows] = await pool.query('SELECT id FROM mngremails WHERE email = ?', [email]);
+    if (!rows.length) {
+      return res.json({ status: false, message: 'Email not registered' });
+    }
+
+    // Generate 6-digit numeric PIN
     const pin = generateSecurePin(6);
-    res.json({ message: 'PIN generated', pin });
+
+    // Insert or replace PIN in engineering_pins table
+    await pool.query(
+      `REPLACE INTO engineering_pins (email, pin, created_at) VALUES (?, ?, NOW())`,
+      [email, pin]
+    );
+
+    // Prepare email content
+    const subject = 'Engineering Mode PIN';
+    const message = `Dear Sir,
+
+I have requested a pin to configure the charger. My details are:
+Name: ${name || ''}
+Mobile: ${mobile || ''}
+Email: ${useremail || ''}
+
+OTP to access Engineering Mode is: ${pin}
+This code is valid for 5 minutes.
+
+Regards,
+BelectriQ Team`;
+
+    // Send email
+    const sent = await sendEmail(email, subject, message);
+
+    if (sent) {
+      res.json({ status: true, message: 'OTP sent to your registered email' });
+    } else {
+      res.json({ status: false, message: 'Failed to send email' });
+    }
+
   } catch (err) {
-    console.error('generatePin error', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('generatePin error:', err);
+    res.status(500).json({ status: false, message: 'Server error' });
   }
 }
+
