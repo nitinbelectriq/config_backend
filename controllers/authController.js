@@ -39,7 +39,7 @@ debugger;
       [email, hashedPassword, 0, verification_code, name, mobile, macid || null]
     );
 
-    const verify_link = `http://localhost:3000/verify?code=${verification_code}`;
+    const verify_link = `http://54.242.254.40/auth/verify?code=${verification_code}`;
     const message = `Hello ${name},\n\nPlease click the following link to verify your email:\n\n${verify_link}\n\nThank you!`;
 
     const sent = await sendEmail(email, 'BelectriQ Mobility Email Confirmation', message);
@@ -151,7 +151,7 @@ export async function requestReset(req, res) {
     const [rows] = await pool.query(`SELECT id FROM ${table} WHERE email = ?`, [email]);
     if (!rows.length) return res.json({ status: false, message: 'Email not found' });
 
-    const pin = generatePin();
+    const pin = generatePinrandom();
     await pool.query(`UPDATE ${table} SET token = ? WHERE email = ?`, [pin, email]);
 
     await sendEmail(email, 'Password Reset Code', `Your password reset code is: ${pin}\n\nDo not share this with anyone.`);
@@ -162,6 +162,10 @@ export async function requestReset(req, res) {
   }
 }
 
+function generatePinrandom() {
+  // Generates a 6-digit numeric PIN
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 // ---------------- Validate PIN ----------------
 export async function validatePin(req, res) {
   const { email, pin } = req.body;

@@ -1,23 +1,24 @@
 import nodemailer from 'nodemailer';
 
-// Direct credentials (no .env)
 const transporter = nodemailer.createTransport({
-  host: 'smtp.belectriq.co',   // your mail server
-  port: 587,                   // usually 587 for TLS
-  secure: false,               // true if using port 465
+  host: 'email-smtp.us-east-1.amazonaws.com', // replace with your SES region endpoint
+  port: 465, // SSL
+  secure: true, // true for 465, false for 587
   auth: {
-    user: 'nitin.gautam@belectriq.co', // your email
-    pass: 'Dakshit@12#'            // your password
+    user: 'AKIAWOAVSL2SCLMFOUMF',
+    pass: 'BA2sK4So/BTlszxdtuCZxNIz49atI1kCDKnRy5+nnQob'
   }
 });
 
 export async function sendEmail(to, subject, text) {
-  const from = 'nitin.gautam@belectriq.co';
-  const msg = { from, to, subject, text };
-  
   try {
-    await transporter.sendMail(msg);
-    console.log('✅ Email sent successfully');
+    await transporter.sendMail({
+      from: 'nitin.gautam@belectriq.co', // must be verified in SES
+      to,
+      subject,
+      text
+    });
+    console.log('✅ Email sent successfully via SES');
     return true;
   } catch (err) {
     console.error('❌ Email sending failed:', err);
