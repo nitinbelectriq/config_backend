@@ -1,22 +1,26 @@
 import nodemailer from 'nodemailer';
 
-// Direct credentials (no .env)
+// Configure transporter
 const transporter = nodemailer.createTransport({
-  host: 'smtp.belectriq.co',   // your mail server
-  port: 587,                   // usually 587 for TLS
-  secure: false,               // true if using port 465
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false, // TLS for port 587
   auth: {
-    user: 'nitin.gautam@belectriq.co', // your email
-    pass: 'Dakshit@12#'            // your password
+    user: 'noreply@belectriq.co', // Gmail/Workspace email
+    pass: 'vvshlnbtgdbpijal'      // Gmail App Password
   }
 });
 
-export async function sendEmail(to, subject, text) {
-  const from = 'nitin.gautam@belectriq.co';
-  const msg = { from, to, subject, text };
-  
+// Generic send email function
+export async function sendEmail(to, subject, html) {
   try {
-    await transporter.sendMail(msg);
+    await transporter.sendMail({
+      from: '"BelectriQ" <noreply@belectriq.co>', // Sender address
+      to,
+      subject,
+      html, // HTML content for emails
+      text: html.replace(/<[^>]+>/g, '') // plain-text fallback
+    });
     console.log('✅ Email sent successfully');
     return true;
   } catch (err) {
@@ -24,3 +28,4 @@ export async function sendEmail(to, subject, text) {
     return false;
   }
 }
+  

@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { sendEmail } from '../utils/mailer.js';
 import { generateSecurePin } from '../utils/cryptoUtils.js';
-
+import { validatePasswordPolicy ,checkPasswordReuse} from '../utils/passwordPolicy.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
 
@@ -18,16 +18,17 @@ function signToken(payload) {
 // ---------------- Signup ----------------
 export async function signup(req, res) {
   const { email, password, name, mobile, macid } = req.body; 
-debugger;
   if (!email || !password || !name || !mobile) {
     return res.status(400).json({ status: false, message: 'Missing required fields' });
   }
 
+  // ✅ Check password policy
+  const { valid, message } = validatePasswordPolicy(password);
+  if (!valid) return res.status(400).json({ status: false, message });
+
   try {
     const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
-    if (existing.length > 0) {
-      return res.status(409).json({ status: false, message: 'Email already registered' });
-    }
+    if (existing.length > 0) return res.status(409).json({ status: false, message: 'Email already registered' });
 
     const hashedPassword = await bcrypt.hash(password, 12);
     const verification_code = crypto.createHash('md5').update(crypto.randomUUID() + email).digest('hex');
@@ -39,16 +40,17 @@ debugger;
       [email, hashedPassword, 0, verification_code, name, mobile, macid || null]
     );
 
-    const verify_link = `http://localhost:3000/verify?code=${verification_code}`;
-    const message = `Hello ${name},\n\nPlease click the following link to verify your email:\n\n${verify_link}\n\nThank you!`;
+    // ✅ Save password history for reuse check
+    const [userRow] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
+    await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES (?, ?)', [userRow[0].id, hashedPassword]);
 
-    const sent = await sendEmail(email, 'BelectriQ Mobility Email Confirmation', message);
+    const verify_link = `http://localhost:5000/auth/verify?code=${verification_code}`;
+    const messageBody = `Hello ${name},\n\nPlease click the following link to verify your email:\n\n${verify_link}\n\nThank you!`;
 
-    if (sent) {
-      res.json({ status: true, message: 'Signup successful! Check your email to verify.' });
-    } else {
-      res.json({ status: false, message: 'Signup saved, but email failed to send.' });
-    }
+    const sent = await sendEmail(email, 'BelectriQ Mobility Email Confirmation', messageBody);
+
+    if (sent) res.json({ status: true, message: 'Signup successful! Check your email to verify.' });
+    else res.json({ status: false, message: 'Signup saved, but email failed to send.' });
 
   } catch (err) {
     console.error('Signup error:', err);
@@ -70,37 +72,67 @@ export async function login(req, res) {
     // Determine table to check
     const table = engineeringMode ? 'Engineeringmodelogin' : 'users';
 
-    // Check if user exists in the selected table
+    // Fetch user
     const [rows] = await pool.query(`SELECT * FROM ${table} WHERE email = ?`, [email]);
     if (!rows.length) {
-      if (engineeringMode) {
-        return res.status(404).json({
-          status: false,
-          message: 'Engineering mode user not found in Engineeringmodelogin table'
-        });
-      } else {
-        return res.status(401).json({ status: false, message: 'Invalid credentials' });
-      }
+      return res.status(401).json({ status: false, message: 'Invalid credentials' });
     }
 
     const user = rows[0];
 
-    // Compare password
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) return res.status(401).json({ status: false, message: 'Invalid credentials' });
+    // ✅ Account Lockout Configuration
+    const MAX_FAILED_ATTEMPTS = 3;
+    const LOCK_DURATION_MINUTES = 15;
 
-    // For normal users, check email verification
+    // ✅ Check if account is locked
+    if (user.lock_until && new Date(user.lock_until) > new Date()) {
+      const remainingMs = new Date(user.lock_until) - new Date();
+      const remainingMinutes = Math.ceil(remainingMs / 60000);
+      return res.status(403).json({
+        status: false,
+        message: `Account locked. Try again in ${remainingMinutes} minute(s).`
+      });
+    }
+
+    // ✅ Compare password
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      const failed = (user.failed_attempts || 0) + 1;
+
+      // Lock account if max attempts reached
+      if (failed >= MAX_FAILED_ATTEMPTS) {
+        const lockUntil = new Date(Date.now() + LOCK_DURATION_MINUTES * 60 * 1000);
+        await pool.query(
+          `UPDATE ${table} SET failed_attempts = ?, lock_until = ? WHERE id = ?`,
+          [failed, lockUntil, user.id]
+        );
+        return res.status(403).json({
+          status: false,
+          message: `Account locked due to ${MAX_FAILED_ATTEMPTS} failed attempts. Try again after ${LOCK_DURATION_MINUTES} minutes.`
+        });
+      } else {
+        await pool.query(`UPDATE ${table} SET failed_attempts = ? WHERE id = ?`, [failed, user.id]);
+        const attemptsLeft = MAX_FAILED_ATTEMPTS - failed;
+        return res.status(401).json({
+          status: false,
+          message: `Invalid credentials. ${attemptsLeft} attempt(s) remaining.`
+        });
+      }
+    }
+
+    // ✅ Reset failed attempts after successful login
+    await pool.query(`UPDATE ${table} SET failed_attempts = 0, lock_until = NULL WHERE id = ?`, [user.id]);
+
+    // ✅ Check verification for normal users
     if (!engineeringMode && user.is_verified !== 1) {
       return res.status(403).json({ status: false, message: 'Please verify your email' });
     }
 
-    // Generate JWT
+    // ✅ Generate JWT and store it
     const token = signToken({ sub: user.id, email: user.email });
-
-    // Update token in DB
     await pool.query(`UPDATE ${table} SET token=? WHERE id=?`, [token, user.id]);
 
-    // Response
+    // ✅ Successful response
     res.json({
       status: true,
       message: 'Login successful',
@@ -120,6 +152,7 @@ export async function login(req, res) {
     res.status(500).json({ status: false, message: 'Server error' });
   }
 }
+
 
 
 // ---------------- Verify ----------------
@@ -151,7 +184,7 @@ export async function requestReset(req, res) {
     const [rows] = await pool.query(`SELECT id FROM ${table} WHERE email = ?`, [email]);
     if (!rows.length) return res.json({ status: false, message: 'Email not found' });
 
-    const pin = generatePin();
+    const pin = generatePinrandom();
     await pool.query(`UPDATE ${table} SET token = ? WHERE email = ?`, [pin, email]);
 
     await sendEmail(email, 'Password Reset Code', `Your password reset code is: ${pin}\n\nDo not share this with anyone.`);
@@ -162,6 +195,10 @@ export async function requestReset(req, res) {
   }
 }
 
+function generatePinrandom() {
+  // Generates a 6-digit numeric PIN
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 // ---------------- Validate PIN ----------------
 export async function validatePin(req, res) {
   const { email, pin } = req.body;
@@ -206,34 +243,42 @@ export async function updatePassword(req, res) {
   const { token, newPassword, EngineeringModeLogin } = req.body;
   const engineeringMode = !!EngineeringModeLogin;
 
-  if (!token || !newPassword) {
+  if (!token || !newPassword) 
     return res.status(400).json({ status: false, message: 'Missing token or new password' });
-  }
+
+  // ✅ Password policy check
+  const { valid, message } = validatePasswordPolicy(newPassword);
+  if (!valid) return res.status(400).json({ status: false, message });
 
   try {
-    // Choose table dynamically
     const table = engineeringMode ? 'Engineeringmodelogin' : 'users';
+    const [rows] = await pool.query(`SELECT id FROM ${table} WHERE token = ?`, [token]);
+    if (!rows.length) 
+      return res.status(400).json({ status: false, message: 'Invalid token or token expired' });
+
+    const userId = rows[0].id;
+
+    // ✅ Check password reuse (both normal and engineering)
+    const historyTable = engineeringMode ? 'engineering_password_history' : 'password_history';
+    const reused = await checkPasswordReuse(userId, newPassword, pool, historyTable);
+    if (reused) return res.status(400).json({ status: false, message: 'You cannot reuse a recent password.' });
 
     // Hash new password
     const hash = await bcrypt.hash(newPassword, 12);
 
-    // Update password where token matches and clear the token
-    const [result] = await pool.query(
-      `UPDATE ${table} SET password = ?, token = NULL WHERE token = ?`,
-      [hash, token]
-    );
+    // Update password and clear token
+    await pool.query(`UPDATE ${table} SET password = ?, token = NULL WHERE id = ?`, [hash, userId]);
 
-    if (result.affectedRows > 0) {
-      return res.json({ status: true, message: 'Password updated successfully' });
-    } else {
-      return res.status(400).json({ status: false, message: 'Invalid token or token expired' });
-    }
+    // ✅ Store password history
+    await pool.query(`INSERT INTO ${historyTable} (user_id, password_hash) VALUES (?, ?)`, [userId, hash]);
 
+    res.json({ status: true, message: 'Password updated successfully' });
   } catch (err) {
     console.error('updatePassword error:', err);
     res.status(500).json({ status: false, message: 'Server error' });
   }
 }
+
 
 
 // ---------------- Generate PIN (demo only) ----------------
