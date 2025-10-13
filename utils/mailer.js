@@ -1,27 +1,31 @@
 import nodemailer from 'nodemailer';
 
+// Configure transporter
 const transporter = nodemailer.createTransport({
-  host: 'email-smtp.us-east-1.amazonaws.com', // replace with your SES region endpoint
-  port: 465, // SSL
-  secure: true, // true for 465, false for 587
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false, // TLS for port 587
   auth: {
-    user: 'AKIAWOAVSL2SCLMFOUMF',
-    pass: 'BA2sK4So/BTlszxdtuCZxNIz49atI1kCDKnRy5+nnQob'
+    user: 'noreply@belectriq.co', // Gmail/Workspace email
+    pass: 'vvshlnbtgdbpijal'      // Gmail App Password
   }
 });
 
-export async function sendEmail(to, subject, text) {
+// Generic send email function
+export async function sendEmail(to, subject, html) {
   try {
     await transporter.sendMail({
-      from: 'nitin.gautam@belectriq.co', // must be verified in SES
+      from: '"BelectriQ" <noreply@belectriq.co>', // Sender address
       to,
       subject,
-      text
+      html, // HTML content for emails
+      text: html.replace(/<[^>]+>/g, '') // plain-text fallback
     });
-    console.log('✅ Email sent successfully via SES');
+    console.log('✅ Email sent successfully');
     return true;
   } catch (err) {
     console.error('❌ Email sending failed:', err);
     return false;
   }
 }
+  
