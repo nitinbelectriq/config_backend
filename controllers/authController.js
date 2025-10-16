@@ -8,6 +8,7 @@ import { validatePasswordPolicy ,checkPasswordReuse} from '../utils/passwordPoli
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1h';
 
+
 // Helper: create JWT
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });

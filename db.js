@@ -4,7 +4,7 @@ const msMain = {
   HOST: "116.203.172.166",
   USER: "root",
   PASSWORD: "Belectriq##$$%%##",
-  DB: "embedorderdata",
+  DB: "belectriq_cms",
   PORT: 3306
 };
 
