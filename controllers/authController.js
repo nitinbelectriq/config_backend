@@ -44,7 +44,7 @@ export async function signup(req, res) {
     const [userRow] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
     await pool.query('INSERT INTO password_history (user_id, password_hash) VALUES (?, ?)', [userRow[0].id, hashedPassword]);
 
-    const verify_link = `http://localhost:5000/auth/verify?code=${verification_code}`;
+    const verify_link = `http://116.203.172.166:5000/auth/verify?code=${verification_code}`;
     const messageBody = `Hello ${name},\n\nPlease click the following link to verify your email:\n\n${verify_link}\n\nThank you!`;
 
     const sent = await sendEmail(email, 'BelectriQ Mobility Email Confirmation', messageBody);
