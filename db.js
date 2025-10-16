@@ -1,10 +1,10 @@
 import mysql from 'mysql2/promise'; // <- use promise version
 
 const msMain = {
-  HOST: "belectriq-cms-database-1-instance-1.cgdyye6ya8ia.us-east-1.rds.amazonaws.com",
-  USER: "admin",
+  HOST: "116.203.172.166",
+  USER: "root",
   PASSWORD: "Belectriq##$$%%##",
-  DB: "EmbedOrderData",
+  DB: "embedorderdata",
   PORT: 3306
 };
 
