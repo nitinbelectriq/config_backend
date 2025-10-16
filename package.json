@@ -4,8 +4,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node --inspect server.js",
-    "dev": "nodemon server.js"
+    "start": "node --inspect server5000.js",
+    "dev": "nodemon server5000.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
